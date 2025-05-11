@@ -18,6 +18,7 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "cmsis_os.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -25,6 +26,10 @@
 #include "lvgl.h"
 
 #include "sdram.h"
+
+#include "FreeRTOS.h"
+#include "task.h"
+#include "semphr.h"
 
 /* USER CODE END Includes */
 
@@ -52,7 +57,7 @@ static int32_t            y2_fill;
 static int32_t            y_fill_act;
 static const uint16_t * buf_to_flush;
 
-static lv_disp_t *our_disp = NULL;
+
 
 
 /* USER CODE END PD */
@@ -70,7 +75,18 @@ LTDC_HandleTypeDef hltdc;
 
 SDRAM_HandleTypeDef hsdram1;
 
+/* Definitions for defaultTask */
+
 /* USER CODE BEGIN PV */
+SemaphoreHandle_t lvgl_mutex_handle;
+TaskHandle_t lvglTaskHandle;
+
+static lv_disp_t *our_disp = NULL;
+
+void lvgl_task(void *argument);
+void StartLEDTask(void *argument);
+
+
 static lv_display_t * display;
 void my_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map);
 
@@ -95,6 +111,8 @@ static void MX_GPIO_Init(void);
 static void MX_CRC_Init(void);
 static void MX_FMC_Init(void);
 static void MX_LTDC_Init(void);
+void StartDefaultTask(void *argument);
+
 /* USER CODE BEGIN PFP */
 
 /* USER CODE END PFP */
@@ -138,6 +156,7 @@ static void flush_cb(lv_display_t * disp, const lv_area_t *area, uint8_t * px_ma
     /* Enable All the DMA interrupts */
     HAL_StatusTypeDef err;
     uint32_t length = (x2_flush - x1_flush + 1);
+
 #if LV_COLOR_DEPTH == 24 || LV_COLOR_DEPTH == 32
     length *= 2; /* STM32 DMA uses 16-bit chunks so multiply by 2 for 32-bit color */
 #endif
@@ -145,63 +164,97 @@ static void flush_cb(lv_display_t * disp, const lv_area_t *area, uint8_t * px_ma
              length);
     if(err != HAL_OK)
     {
-        while(1);	/*Halt on error*/
+
+    	while(1);	/*Halt on error*/
     }
+
+
 }
 
 
 static void lvgl_test_display(void)
 {
     lv_obj_t *label = lv_label_create(lv_scr_act());  // Créer un label sur l'écran actif
-    lv_label_set_text(label, "Hello Samy !"); // Définir le texte
+    lv_label_set_text(label, "Hello ENSEA !"); // Définir le texte
     lv_obj_align(label, LV_ALIGN_CENTER, 0, 0);        // Centrer le label
 }
 
-static void lvgl_create_schedule(void)
+static void lvgl_display_static_schedule(void)
 {
-    static const char *days[] = {"", "Lun", "Mar", "Mer", "Jeu", "Ven"};
-    static const char *times[] = {"8:00", "10:00", "12:00", "14:00", "16:00"};
+    lv_obj_t *screen = lv_scr_act();
+    lv_obj_set_style_bg_color(screen, lv_color_white(), 0);
 
-    // Créer un conteneur grille
-    lv_obj_t *grid = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(grid, 460, 250);
-    lv_obj_center(grid);
+    // Dimensions
+    const int col_width = 80;
+    const int row_height = 40;
 
-    static lv_coord_t col_dsc[] = {60, 80, 80, 80, 80, 80, LV_GRID_TEMPLATE_LAST};
-    static lv_coord_t row_dsc[] = {30, 40, 40, 40, 40, 40, LV_GRID_TEMPLATE_LAST};
-    lv_obj_set_grid_dsc_array(grid, col_dsc, row_dsc);
-    lv_obj_set_layout(grid, LV_LAYOUT_GRID);
+    const char *days[] = {"Lun", "Mar", "Mer", "Jeu", "Ven"};
+    const char *hours[] = {"08:00", "10:00", "12:00", "14:00", "16:00"};
 
-    // Remplir les en-têtes
-    for (int col = 0; col < 6; col++) {
-        lv_obj_t *lbl = lv_label_create(grid);
-        lv_label_set_text(lbl, days[col]);
-        lv_obj_set_grid_cell(lbl, LV_GRID_ALIGN_CENTER, col, 1,
-                                   LV_GRID_ALIGN_CENTER, 0, 1);
+    // Affichage de la grille
+    for (int row = 0; row < 5; row++) {
+        for (int col = 0; col < 5; col++) {
+            int x = 60 + col * col_width;
+            int y = 40 + row * row_height;
+
+            // Créer un conteneur pour chaque cellule
+            lv_obj_t *cell = lv_obj_create(screen);
+            lv_obj_set_size(cell, col_width - 2, row_height - 2);
+            lv_obj_set_style_bg_color(cell, lv_palette_lighten(LV_PALETTE_BLUE, 4), 0);
+            lv_obj_set_style_border_width(cell, 1, 0);
+            lv_obj_set_style_border_color(cell, lv_color_black(), 0);
+            lv_obj_set_pos(cell, x, y);
+
+            // Exemple de cours à placer
+            if ((row == 0 && col == 0) || (row == 2 && col == 3)) {
+                lv_obj_t *label = lv_label_create(cell);
+                lv_label_set_text(label, (row == 0) ? "Maths" : "Physique");
+                lv_obj_center(label);
+            }
+        }
     }
 
-    for (int row = 1; row <= 5; row++) {
-        lv_obj_t *lbl = lv_label_create(grid);
-        lv_label_set_text(lbl, times[row - 1]);
-        lv_obj_set_grid_cell(lbl, LV_GRID_ALIGN_CENTER, 0, 1,
-                                   LV_GRID_ALIGN_CENTER, row, 1);
+    // Affichage des jours (colonnes)
+    for (int i = 0; i < 5; i++) {
+        lv_obj_t *day_label = lv_label_create(screen);
+        lv_label_set_text_fmt(day_label, "%s", days[i]);
+        lv_obj_set_pos(day_label, 60 + i * col_width + 10, 10);
     }
 
-    // Exemple de cours dans des cases
-    lv_obj_t *cours = lv_label_create(grid);
-    lv_label_set_text(cours, "Maths");
-    lv_obj_set_grid_cell(cours, LV_GRID_ALIGN_CENTER, 1, 1,
-                                LV_GRID_ALIGN_CENTER, 1, 1);
+    // Affichage des heures (lignes)
+    for (int i = 0; i < 5; i++) {
+        lv_obj_t *hour_label = lv_label_create(screen);
+        lv_label_set_text_fmt(hour_label, "%s", hours[i]);
+        lv_obj_set_pos(hour_label, 5, 40 + i * row_height + 10);
+    }
+}
 
-    lv_obj_t *cours2 = lv_label_create(grid);
-    lv_label_set_text(cours2, "Physique");
-    lv_obj_set_grid_cell(cours2, LV_GRID_ALIGN_CENTER, 2, 1,
-                                 LV_GRID_ALIGN_CENTER, 3, 1);
+void lvgl_task(void *argument)
+{
+    lvgl_mutex_handle = xSemaphoreCreateMutex();
+    if (lvgl_mutex_handle == NULL) {
+        Error_Handler(); // Mutex non créé
+    }
+
+    for(;;) {
+        vTaskDelay(pdMS_TO_TICKS(5));
+
+        if (xSemaphoreTake(lvgl_mutex_handle, portMAX_DELAY) == pdTRUE) {
+            lv_task_handler();
+            xSemaphoreGive(lvgl_mutex_handle);
+        }
+    }
 }
 
 
+void StartLEDTask(void *argument)
+{
+    for (;;) {
+        HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_1);  // LED sur STM32F746G-DISCO
+        vTaskDelay(pdMS_TO_TICKS(500));         // Delay de 500 ms
+    }
+}
 
-/* Callback de flush utilisé par LVGL */
 
 
 /* USER CODE END 0 */
@@ -230,6 +283,7 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
+
   /* Enable I-Cache */
   SCB_EnableICache();
 
@@ -248,34 +302,95 @@ int main(void)
   MX_CRC_Init();
   MX_FMC_Init();
   MX_LTDC_Init();
-  /* USER CODE BEGIN 2 */
- //display_init();
-  //lv_test_ui();
 
-  DMA_Config();
+  /* USER CODE BEGIN 2 */
+
+
+
+  	DMA_Config();
 
 	static uint16_t buf1[TFT_HOR_RES * 68];
 	static uint16_t buf2[TFT_HOR_RES * 68];
 	display = lv_display_create(TFT_HOR_RES, TFT_VER_RES);
 	lv_display_set_buffers(display, buf1, buf2, sizeof(buf1), LV_DISPLAY_RENDER_MODE_PARTIAL);
+
+
 	lv_display_set_flush_cb(display, flush_cb);
 
-	//lvgl_test_display();
-	lvgl_create_schedule();
 
-
-  //HAL_LTDC_SetAddress(&hltdc, FRAMEBUFFER_ADDR, 0);
   /* USER CODE END 2 */
+
+
+
+
+  /* USER CODE BEGIN RTOS_MUTEX */
+  /* add mutexes, ... */
+  /* USER CODE END RTOS_MUTEX */
+
+  /* USER CODE BEGIN RTOS_SEMAPHORES */
+  /* add semaphores, ... */
+
+
+	/* Tâche: gestion de LVGL (flush, animations, etc.) */
+	xTaskCreate(lvgl_task,        // Fonction de tâche
+	            "LVGL_Task",      // Nom de la tâche
+	            2048,             // Taille de la pile (en mots, pas en octets)
+	            NULL,             // Paramètre
+	            tskIDLE_PRIORITY + 2, // Priorité
+	            &lvglTaskHandle);
+
+	//attention toggle led de rétroéclairage car PIN_1 de PORT I est commune,
+	//mais ça n'a pas un grand impact sur l'écran.
+	xTaskCreate(StartLEDTask,       // Fonction de la tâche
+	            "LEDTask",          // Nom
+	            128,                // Taille de pile (mots, pas octets)
+	            NULL,               // Paramètre
+	            tskIDLE_PRIORITY + 1, // Priorité
+	            NULL);
+
+
+	//lvgl_test_display();
+	lvgl_display_static_schedule();
+
+	/* Lancer FreeRTOS */
+	vTaskStartScheduler();
+  /* USER CODE END RTOS_SEMAPHORES */
+
+  /* USER CODE BEGIN RTOS_TIMERS */
+  /* start timers, add new ones, ... */
+  /* USER CODE END RTOS_TIMERS */
+
+  /* USER CODE BEGIN RTOS_QUEUES */
+  /* add queues, ... */
+  /* USER CODE END RTOS_QUEUES */
+
+  /* Create the thread(s) */
+  /* creation of defaultTask */
+
+
+  /* USER CODE BEGIN RTOS_THREADS */
+  /* add threads, ... */
+  /* USER CODE END RTOS_THREADS */
+
+  /* USER CODE BEGIN RTOS_EVENTS */
+  /* add events, ... */
+  /* USER CODE END RTOS_EVENTS */
+
+  /* Start scheduler */
+
+
+  /* We should never get here as control is now taken by the scheduler */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   //HAL_GPIO_WritePin(GPIOI, GPIO_PIN_1, GPIO_PIN_SET);  // Active le backlight
 
   //Test de fond rouge en écrivant directement dans la SDRAM framebuffer
-  /*uint16_t *fb = (uint16_t *)FRAMEBUFFER_ADDR;
+  /*uint16_t *fb = (uint16_t *)my_fb;
   for(int i = 0; i < LVGL_HOR_RES * LVGL_VER_RES; i++) {
       fb[i] = 0xF800; // rouge RGB565
   }*/
+  //SCB_CleanDCache();
 
 
 
@@ -285,8 +400,8 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	  HAL_Delay(5);
-	  lv_task_handler();
+	  //HAL_Delay(5);
+	  //lv_task_handler();
 
   }
   /* USER CODE END 3 */
@@ -414,23 +529,17 @@ static void MX_LTDC_Init(void)
     Error_Handler();
   }
   pLayerCfg.WindowX0 = 0;
-  pLayerCfg.WindowX1 = LVGL_HOR_RES;
+  pLayerCfg.WindowX1 = 480;
   pLayerCfg.WindowY0 = 0;
-  pLayerCfg.WindowY1 = LVGL_VER_RES;
-
+  pLayerCfg.WindowY1 = 272;
   pLayerCfg.PixelFormat = LTDC_PIXEL_FORMAT_RGB565;
-
-  pLayerCfg.FBStartAdress = my_fb;  // 0xC0000000
-
   pLayerCfg.Alpha = 255;
   pLayerCfg.Alpha0 = 0;
-
   pLayerCfg.BlendingFactor1 = LTDC_BLENDING_FACTOR1_PAxCA;
   pLayerCfg.BlendingFactor2 = LTDC_BLENDING_FACTOR2_CA;
-
-  pLayerCfg.ImageWidth = LVGL_HOR_RES;
-  pLayerCfg.ImageHeight = LVGL_VER_RES;
-
+  pLayerCfg.FBStartAdress = (uint32_t) my_fb;
+  pLayerCfg.ImageWidth = 480;
+  pLayerCfg.ImageHeight = 272;
   pLayerCfg.Backcolor.Blue = 0;
   pLayerCfg.Backcolor.Green = 0;
   pLayerCfg.Backcolor.Red = 0;
@@ -914,10 +1023,12 @@ static void MX_GPIO_Init(void)
 
 /* USER CODE BEGIN MX_GPIO_Init_2 */
   /* Assert display enable LCD_DISP pin */
+  __HAL_LTDC_ENABLE(&hltdc);
     HAL_GPIO_WritePin(LCD_DISP_GPIO_Port, LCD_DISP_Pin, GPIO_PIN_SET);
 
     /* Assert backlight LCD_BL_CTRL pin */
     HAL_GPIO_WritePin(LCD_BL_CTRL_GPIO_Port, LCD_BL_CTRL_Pin, GPIO_PIN_SET);
+
 /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -973,10 +1084,15 @@ static void DMA_TransferComplete(DMA_HandleTypeDef *han)
 {
     y_fill_act ++;
 
+    //HAL_GPIO_TogglePin(GPIOI, GPIO_PIN_1);
+
     if(y_fill_act > y2_fill) {
     	SCB_CleanInvalidateDCache();
     	SCB_InvalidateICache();
         lv_disp_flush_ready(display);
+
+
+
     } else {
     	uint32_t length = (x2_flush - x1_flush + 1);
         buf_to_flush += x2_flush - x1_flush + 1;
@@ -1019,6 +1135,37 @@ void CPY_BUF_DMA_STREAM_IRQHANDLER(void)
 
 
 /* USER CODE END 4 */
+
+/* USER CODE BEGIN Header_StartDefaultTask */
+/**
+  * @brief  Function implementing the defaultTask thread.
+  * @param  argument: Not used
+  * @retval None
+  */
+/* USER CODE END Header_StartDefaultTask */
+
+
+/**
+  * @brief  Period elapsed callback in non blocking mode
+  * @note   This function is called  when TIM6 interrupt took place, inside
+  * HAL_TIM_IRQHandler(). It makes a direct call to HAL_IncTick() to increment
+  * a global variable "uwTick" used as application time base.
+  * @param  htim : TIM handle
+  * @retval None
+  */
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
+{
+  /* USER CODE BEGIN Callback 0 */
+
+  /* USER CODE END Callback 0 */
+  if (htim->Instance == TIM6) {
+    HAL_IncTick();
+
+  }
+  /* USER CODE BEGIN Callback 1 */
+
+  /* USER CODE END Callback 1 */
+}
 
 /**
   * @brief  This function is executed in case of error occurrence.

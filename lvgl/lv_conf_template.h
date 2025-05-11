@@ -107,7 +107,7 @@
  * - LV_OS_MQX
  * - LV_OS_SDL2
  * - LV_OS_CUSTOM */
-#define LV_USE_OS   LV_OS_NONE
+#define LV_USE_OS   LV_OS_FREERTOS
 
 #if LV_USE_OS == LV_OS_CUSTOM
     #define LV_OS_CUSTOM_INCLUDE <stdint.h>
@@ -118,7 +118,7 @@
      * than unblocking a task using an intermediary object such as a binary semaphore.
      * RTOS task notifications can only be used when there is only one task that can be the recipient of the event.
      */
-    #define LV_USE_FREERTOS_TASK_NOTIFY 1
+    #define LV_USE_FREERTOS_TASK_NOTIFY 0
 #endif
 
 /*========================

@@ -139,8 +139,7 @@ uint8_t BSP_SDRAM_Sendcmd(FMC_SDRAM_CommandTypeDef *SdramCmd);*/
 /*void    BSP_SDRAM_MspInit(SDRAM_HandleTypeDef  *hsdram, void *Params);
 void    BSP_SDRAM_MspDeInit(SDRAM_HandleTypeDef  *hsdram, void *Params);*/
 
-void display_init(void);
-void my_flush_cb(lv_display_t * disp, const lv_area_t * area, uint8_t * px_map);
+
 
 
 /**
